@@ -54,6 +54,7 @@ class APInfo(object):
         self.associated_count = 0
         self.utilization = 0.0
         self.channel = 0
+        self.last_seen = 0
 
     def __gt__(self, apinfo2):
         return (self.signal > apinfo2.signal)
@@ -106,6 +107,7 @@ def objectify(ins: List[APInfo]):
                 "associated_count": i.associated_count,
                 "utilization": i.utilization,
                 "channel": i.channel,
+                "last_seen": i.last_seen
             },
             ins
         ),
@@ -156,6 +158,7 @@ while True:
         aggInfo.ssids = list(map(lambda ai: ai.ssids[0], grps[key].data))
         aggInfo.signal = sum(
             list(map(lambda ai: ai.signal, grps[key].data))) / len(grps[key].data)
+        aggInfo.last_seen = grps[key].lastSeen
 
         aggregatedAPInfoes.append(aggInfo)
 
