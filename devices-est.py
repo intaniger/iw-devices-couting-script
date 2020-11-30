@@ -1,12 +1,12 @@
 #!/usr/bin/python3
 
 from subprocess import run, PIPE
-from sys import argv, stderr
+from sys import argv
 from os import geteuid
 from re import match
 from typing import List, Mapping
-from functools import reduce
 from time import sleep, time
+from json import dump
 
 bssRegex = r'^BSS\s([0-9a-f:]*)'
 stationCountRegex = r'.*station count: (\d*)'
@@ -14,6 +14,9 @@ utilRegex = r'.*channel utilisation: (\d*)\/(\d*)'
 signalRegex = r'.*signal: ([-]?\d*\.\d*) dBm'
 ssidRegex = r'[ \t]SSID: (.*)'
 primaryChannelRegex = r'.*primary channel: (\d*)'
+
+TTL = 300
+outfile = None
 
 
 def classifySignalQual(signal):
@@ -93,10 +96,20 @@ def scan(deviceName):
     return APInfoes
 
 
-def objectify(groups: Mapping[str, LRU], ts: int):
-    obj = {
-        "ts": ts,
-    }
+def objectify(ins: List[APInfo]):
+    return list(
+        map(
+            lambda i: {
+                "bss": i.bss,
+                "ssids": i.ssids,
+                "signal": i.signal,
+                "associated_count": i.associated_count,
+                "utilization": i.utilization,
+                "channel": i.channel,
+            },
+            ins
+        ),
+    )
 
 
 if geteuid() != 0:
@@ -104,35 +117,37 @@ if geteuid() != 0:
     exit(1)
 
 if len(argv) < 3:
-    print("Usage: devices-est.py [wireless interface] [scan interval]")
+    print(
+        "Usage: devices-est.py [wireless interface] [scan interval] [TTL] [out filename]")
     exit(1)
+if len(argv) >= 4:
+    TTL = int(argv[3])
+if len(argv) == 5:
+    outfile = argv[4]
 
 while True:
     rawInfoes = scan(argv[1])
     currenTime = int(time())
-    localGrps = {}
     run('clear')
     for a in sorted(rawInfoes, key=lambda n: [n.bss], reverse=True):
-        key = "%s*-%3d (%d, %d)" % (a.bss[0:-2],
-                                    a.channel, a.associated_count, a.utilization)
-        # a.bss[0:-2]+"* channel "+str(a.channel)
-        if key in localGrps:
-            localGrps[key].append(a)
+        key = "%s*-%d" % (a.bss[0:-2], a.channel)
+        if key in grps:
+            if grps[key].lastSeen != currenTime:
+                grps[key].data = [a]
+            else:
+                grps[key].data.append(a)
+            grps[key].lastSeen = currenTime
         else:
-            localGrps[key] = [a]
-
-    for key in list(grps.keys()):
-        if currenTime - int(grps[key].lastSeen) > 300:
-            print("Haven't seen %s for more than 300 secs" % key)
-            del grps[key]
-
-    for key in localGrps.keys():
-        grps[key] = LRU()
-        grps[key].data = localGrps[key]
-        grps[key].lastSeen = currenTime
+            grps[key] = LRU()
+            grps[key].lastSeen = currenTime
+            grps[key].data = [a]
 
     aggregatedAPInfoes = []
-    for key in grps.keys():
+    for key in list(grps.keys()):
+        if currenTime - int(grps[key].lastSeen) > TTL:
+            print("Haven't seen %s for more than %d secs" % (key, TTL))
+            del grps[key]
+            continue
         aggInfo = APInfo()
         aggInfo.bss = grps[key].data[0].bss[0:-2]+"*"
         aggInfo.associated_count = grps[key].data[0].associated_count
@@ -144,9 +159,25 @@ while True:
 
         aggregatedAPInfoes.append(aggInfo)
 
-    for ai in sorted(aggregatedAPInfoes):
+    aggregatedAPInfoes.sort()
+    for ai in aggregatedAPInfoes:
         print(ai)
 
-    print("devices = %d" %
-          sum(map(lambda i: i.associated_count, aggregatedAPInfoes)))
+    totalDev = sum(map(lambda i: i.associated_count, aggregatedAPInfoes))
+
+    print("devices = %d" % totalDev)
+    if outfile != None:
+        with open(outfile, mode="a") as target:
+            if target.tell() == 0:
+                target.write("[")
+            dump(
+                {
+                    "ts": currenTime,
+                    "totalDevs": totalDev,
+                    "aps": objectify(aggregatedAPInfoes),
+                },
+                target
+            )
+            target.write(",")
+            target.close()
     sleep(int(argv[2]))
