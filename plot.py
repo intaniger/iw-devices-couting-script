@@ -18,16 +18,16 @@ with open(argv[1], "r") as target:
 
 with open(outfile, "w") as out:
     for point in data[start:]:
-        y = point["totalDevs"]
-        # y = sum(
-        #     map(
-        #         lambda ap: ap["associated_count"],
-        #         filter(
-        #             lambda a: a["signal"] > -50.0,
-        #             point["aps"]
-        #         )
-        #     )
-        # )
+        # y = point["totalDevs"]
+        y = sum(
+            map(
+                lambda ap: ap["associated_count"],
+                filter(
+                    lambda a: point["ts"] - a["last_seen"] < 60,
+                    point["aps"]
+                )
+            )
+        )
         out.write("%d\t%d\n" % (point["ts"], y))
 
 
